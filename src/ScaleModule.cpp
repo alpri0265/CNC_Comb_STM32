@@ -31,11 +31,11 @@ void init()
     enc.IC1Polarity  = TIM_ICPOLARITY_RISING;
     enc.IC1Selection = TIM_ICSELECTION_DIRECTTI;
     enc.IC1Prescaler = TIM_ICPSC_DIV1;
-    enc.IC1Filter    = 10;
+    enc.IC1Filter    = 15;            // fdts/32 * N=8 -> 1.5 us digital glitch filter (CNC noise safe)
     enc.IC2Polarity  = TIM_ICPOLARITY_RISING;
     enc.IC2Selection = TIM_ICSELECTION_DIRECTTI;
     enc.IC2Prescaler = TIM_ICPSC_DIV1;
-    enc.IC2Filter    = 10;
+    enc.IC2Filter    = 15;
     HAL_TIM_Encoder_Init(&s_htim8, &enc);
 
     TIM_SlaveConfigTypeDef sc = {};
@@ -65,8 +65,9 @@ int32_t get_raw_count()
     int32_t combined = rol + cnt;
 
     if (sr & TIM_FLAG_UPDATE) {
-        // missed, safe: treat 0/0xFFFF boundaries conservatively
-        if (cnt < 0x8000) combined += 0x10000;
+        // missed rollover IRQ: conservatively compensate in-place
+        if (cnt < 0x8000) combined += 0x10000;  // missed UP  (FFFF -> 0, overflow  +)
+        else              combined -= 0x10000;  // missed DOWN (0    -> FFFF, underflow -)
     }
     return combined;
 }

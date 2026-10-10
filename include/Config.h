@@ -156,11 +156,32 @@ constexpr float X_MAX_MM              = 470.0f;       // safety: >= 460 + 10 mm 
 constexpr float Y_MAX_MM              = 100.0f;
 constexpr float Z_MAX_MM              = 150.0f;
 
+// Параметри циклу прорізання гребінки (default; можна міняти через RECIPE.TXT на SD):
+constexpr uint16_t SLOTS_COUNT         = 225;            // 225 прорізів (450/2)
+constexpr float    SLOT_STEP_MM        = 2.000f;         // крок 2.000 мм
+constexpr float    SLOT_WIDTH_MM       = 1.0f;           // ширина паза = пилка Ø80x1.0
+constexpr float    SLOT_DEPTH_MM       = 12.0f;          // довжина прорізу Y = 12 мм
+
 // Feedrate defaults
 constexpr float DEFAULT_FEED_MM_MIN   = 60.0f;        // brass cut
 constexpr float RAPID_FEED_MM_MIN     = 400.0f;       // traverse
 constexpr float Z_FEED_CUT_MM_MIN     = 30.0f;
 constexpr float Z_APPROACH_MM         = 3.0f;
+constexpr float Z_FEED_PLUNGE_MM_MIN  = 15.0f;        // подача Z при зануренні в латунь
+constexpr float MATERIAL_THICKNESS_MM = 3.0f;         // товщина латунної заготовки 3 мм
+constexpr float SLOT_OVERCUT_MM       = 0.3f;         // переріз (z_plunge = товщина + переріз)
+
+// Homing
+constexpr float HOME_FAST_MM_MIN      = 200.0f;       // пошук home-сенсора
+constexpr float HOME_SLOW_MM_MIN      = 30.0f;        // підхід до home з низькою feed
+constexpr float HOME_BACKOFF_MM       = 1.5f;         // відступ від home перед повільним підходом
+constexpr uint16_t HOME_AXIS_TIMEOUT_MS = 60000;      // watchdog 60с на вісь (захист застряглі рухи)
+constexpr uint8_t  HOME_BACKOFF_RETRIES_MAX = 3;      // макс backoff повторів при залипшому home
+
+// X-axis backlash + correction via linear scale
+constexpr float BACKLASH_X_MM         = 0.020f;       // SFU1605 типово 15-30 мкм (замірити потім)
+constexpr float CORR_TOL_MM           = 0.010f;       // допуск по X між cmd і шкалою (10 мкм)
+constexpr float FEED_CORR_MM_MIN      = 100.0f;       // feed корекції
 
 // Timer clocks (AHB 168, APB1 42, APB1-tim x2 = 84; APB2 84, APB2-tim x2 = 168)
 constexpr uint32_t APB1_TIM_CK        = 84000000;
@@ -171,6 +192,7 @@ constexpr uint32_t APB2_TIM_CK        = 168000000;
 namespace SpindleCfg {
 constexpr uint32_t PWM_FREQ_HZ      = 10000;          // 10 kHz PWM for 0-10 V
 constexpr uint16_t PWM_MAX_COUNTS   = 1000;           // 0.1% resolution
+constexpr uint16_t RPM_MIN          = 10;             // мінім. оберти (захист ділення на 0 у clamp)
 constexpr uint16_t RPM_MAX          = 3000;           // SD300 0-10 V -> 0-3000 rpm (factory)
 constexpr uint16_t RPM_TARGET       = 250;            // spec for HSS blade D80 x 1.0
 } // namespace SpindleCfg
@@ -201,6 +223,8 @@ enum class ProgramState : uint8_t {
     CUT_SLOT_Y,
     RETRACT_Z,
     INDEX_X,
+    CORRECT_X,
+    STOPPING,
     DONE,
     PAUSED,
     FAULT

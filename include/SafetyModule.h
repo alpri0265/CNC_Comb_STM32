@@ -30,6 +30,11 @@ bool limit_minus_active(Axis a);
 void  clear_faults(); // only safe to call when ESTOP released, motors disabled
 void  trigger_fault(Fault f);
 
+// Homing mode: дозволяє осі рухатися в мінус (домашньому) напрямку навіть якщо
+// MINUS-ліміт активний (home-сенсор може бути за лімітом).
+// Викликати set_homing_allow_neg(axis, true) перед homing; false — після homing.
+void  set_homing_allow_neg(Axis a, bool allow);
+
 void  register_fault_callback(void (*cb)(Fault));
 
 // Safe-state: drivers disabled, spindle 0 V, Z brake engaged, LEDs show FAULT

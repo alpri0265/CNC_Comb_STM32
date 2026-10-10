@@ -104,6 +104,7 @@ static void init_timer_pwm(TIM_HandleTypeDef *htim, TIM_TypeDef *instance,
                            uint32_t timer_clk_hz, uint32_t channel,
                            GPIO_TypeDef *port, uint16_t pul_pin, uint8_t af)
 {
+    (void)timer_clk_hz; // ARR/PSC обчислюються динамічно в apply_step_freq (див. нижче)
     GPIO_InitTypeDef gpio = {};
     gpio.Mode      = GPIO_MODE_AF_PP;
     gpio.Pull      = GPIO_NOPULL;
@@ -194,12 +195,11 @@ void move_pulses(Axis a, int32_t pulses, uint32_t step_freq_hz)
     __enable_irq();
 
     TIM_CCxChannelCmd(ax.htim.Instance, ax.channel, TIM_CCx_ENABLE);
-    if (ax.htim.Instance == TIM1) {
-        TIM_CCxNChannelCmd(ax.htim.Instance, ax.channel, TIM_CCxN_DISABLE);
-    }
     __HAL_TIM_ENABLE_IT(&ax.htim, TIM_IT_UPDATE);
     HAL_TIM_PWM_Start(&ax.htim, ax.channel);
-    __HAL_TIM_MOE_ENABLE(&ax.htim);
+    if (ax.htim.Instance == TIM1) {
+        __HAL_TIM_MOE_ENABLE(&ax.htim);
+    }
 }
 
 void move_mm(Axis a, float delta_mm, float feed_mm_min)
@@ -216,26 +216,17 @@ void move_absolute_mm(Axis a, float abs_mm, float feed_mm_min)
     move_mm(a, abs_mm - cur, feed_mm_min);
 }
 
-void goto_xyz_sequential(float x_mm, float y_mm, float z_mm, float feed_xy, float feed_z)
-{
-    // Z up first (safety)
-    move_absolute_mm(Axis::Z, AxisCfg::Z_APPROACH_MM, feed_z);
-    while (is_busy(Axis::Z)) { /* wait, but consider non-blocking upper layer */ }
-    move_absolute_mm(Axis::X, x_mm, feed_xy);
-    while (is_busy(Axis::X)) {}
-    move_absolute_mm(Axis::Y, y_mm, feed_xy);
-    while (is_busy(Axis::Y)) {}
-    move_absolute_mm(Axis::Z, z_mm, feed_z);
-    while (is_busy(Axis::Z)) {}
-}
-
 void abort(Axis a)
 {
     if ((int)a < 0 || (int)a >= 3) return;
     AxisState &ax = s_axis[(int)a];
     __HAL_TIM_DISABLE_IT(&ax.htim, TIM_IT_UPDATE);
     HAL_TIM_PWM_Stop(&ax.htim, ax.channel);
-    __HAL_TIM_MOE_DISABLE(&ax.htim);
+    // MOE (Main Output Enable) існує ТІЛЬКИ в advanced таймері TIM1 (BDTR регістр).
+    // Для general-purpose TIM3/TIM4: зарезервований регістр, запис = непередбачувана поведінка.
+    if (ax.htim.Instance == TIM1) {
+        __HAL_TIM_MOE_DISABLE(&ax.htim);
+    }
     __disable_irq();
     ax.pulses_left = 0;
     ax.busy        = false;
@@ -290,7 +281,10 @@ void on_timer_update(Axis a)
         if (ax.pulses_left == 0) {
             __HAL_TIM_DISABLE_IT(&ax.htim, TIM_IT_UPDATE);
             HAL_TIM_PWM_Stop(&ax.htim, ax.channel);
-            __HAL_TIM_MOE_DISABLE(&ax.htim);
+            // MOE тільки advanced TIM1 (не TIM3/TIM4) - див abort() L225
+            if (ax.htim.Instance == TIM1) {
+                __HAL_TIM_MOE_DISABLE(&ax.htim);
+            }
             ax.busy = false;
         }
     }

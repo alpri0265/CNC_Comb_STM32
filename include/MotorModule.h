@@ -15,8 +15,6 @@ void move_pulses(Axis a, int32_t pulses, uint32_t step_freq_hz);
 void move_mm(Axis a, float delta_mm, float feed_mm_min);
 void move_absolute_mm(Axis a, float abs_mm, float feed_mm_min);
 
-void goto_xyz_sequential(float x_mm, float y_mm, float z_mm, float feed_xy, float feed_z);
-
 void abort(Axis a);
 void abort_all();
 

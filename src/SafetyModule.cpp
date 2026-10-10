@@ -7,6 +7,7 @@ namespace SafetyModule {
 static volatile uint16_t s_fault_mask;
 static void (*s_cb)(Fault) = nullptr;
 static volatile bool s_estop_pending = false;
+static bool s_homing_allow_neg[3] = { false, false, false };
 
 struct Input {
     GPIO_TypeDef *port;
@@ -77,15 +78,17 @@ static void inputs_init()
     GPIO_TypeDef *gx = PinCfg::X_LIM_GPIOx;
     GPIO_TypeDef *gy = PinCfg::Y_LIM_GPIOx;
     GPIO_TypeDef *gz = PinCfg::Z_LIM_GPIOx;
-    s_home[0] = { gx, PinCfg::X_HOME_PIN, SafetyCfg::HOME_ACTIVE_LEVEL,  SafetyCfg::DEBOUNCE_MS, 0, read_p(s_estop), 0 };
-    s_limp[0] = { gx, PinCfg::X_LIMP_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_limm[0] = { gx, PinCfg::X_LIMM_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_home[1] = { gy, PinCfg::Y_HOME_PIN, SafetyCfg::HOME_ACTIVE_LEVEL,  SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_limp[1] = { gy, PinCfg::Y_LIMP_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_limm[1] = { gy, PinCfg::Y_LIMM_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_home[2] = { gz, PinCfg::Z_HOME_PIN, SafetyCfg::HOME_ACTIVE_LEVEL,  SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_limp[2] = { gz, PinCfg::Z_LIMP_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
-    s_limm[2] = { gz, PinCfg::Z_LIMM_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, 0 };
+    // NOTE: stable_val і raw_last будуть перезаписані нижче в циклі for(i=0..2)
+    // фактичним ReadPin з власного порту/піна. Тут placeholder = false/0.
+    s_home[0] = { gx, PinCfg::X_HOME_PIN, SafetyCfg::HOME_ACTIVE_LEVEL,  SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_limp[0] = { gx, PinCfg::X_LIMP_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_limm[0] = { gx, PinCfg::X_LIMM_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_home[1] = { gy, PinCfg::Y_HOME_PIN, SafetyCfg::HOME_ACTIVE_LEVEL,  SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_limp[1] = { gy, PinCfg::Y_LIMP_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_limm[1] = { gy, PinCfg::Y_LIMM_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_home[2] = { gz, PinCfg::Z_HOME_PIN, SafetyCfg::HOME_ACTIVE_LEVEL,  SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_limp[2] = { gz, PinCfg::Z_LIMP_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, false };
+    s_limm[2] = { gz, PinCfg::Z_LIMM_PIN, SafetyCfg::LIMIT_ACTIVE_LEVEL, SafetyCfg::DEBOUNCE_MS, 0, false, false };
 
     for (int i = 0; i < 3; i++) {
         s_home[i].raw_last = (HAL_GPIO_ReadPin(s_home[i].port, s_home[i].pin) == GPIO_PIN_SET);
@@ -145,15 +148,34 @@ void tick_1ms()
         // ESTOP released -> mask cleared by operator via clear_faults()
     }
 
-    // Limits: active if direction is toward the limit AND switch engaged.
-    // Simpler rule: any active limit -> respective fault (but for homing we allow home direction).
+    // Limits: Fault ТІЛЬКИ якщо вісь BUSY і напрямок руху У БІК активованого ліміту.
+    // Якщо вісь стоїть (busy=false) або рух ВІД ліміту — дозволяємо escape з зони ліміту.
+    // Для homing: s_homing_allow_neg[axis] == true → подавляємо MINUS Fault.
     const Fault lim_p[3] = { Fault::LIM_X_P, Fault::LIM_Y_P, Fault::LIM_Z_P };
     const Fault lim_m[3] = { Fault::LIM_X_M, Fault::LIM_Y_M, Fault::LIM_Z_M };
     for (int i = 0; i < 3; i++) {
+        Axis ax = (Axis)i;
+        bool busy         = MotorModule::is_busy(ax);
+        bool dir_positive = MotorModule::get_direction(ax);
         bool p = (s_limp[i].stable_val == s_limp[i].active_level);
         bool m = (s_limm[i].stable_val == s_limm[i].active_level);
-        if (p && !(s_fault_mask & (uint16_t)lim_p[i])) trigger_fault(lim_p[i]);
-        if (m && !(s_fault_mask & (uint16_t)lim_m[i])) trigger_fault(lim_m[i]);
+        (void)ax;
+
+        if (p) {
+            // Fault: рух В + сторону (dir_positive) + busy (загроза врізатися далі).
+            const bool toward_plus = busy && dir_positive;
+            if (toward_plus && !(s_fault_mask & (uint16_t)lim_p[i])) {
+                trigger_fault(lim_p[i]);
+            }
+        }
+        if (m) {
+            if (s_homing_allow_neg[i]) continue; // homing режим: ігнор мінус-ліміт
+            // Fault: рух В - сторону (dir_positive=false) + busy.
+            const bool toward_minus = busy && !dir_positive;
+            if (toward_minus && !(s_fault_mask & (uint16_t)lim_m[i])) {
+                trigger_fault(lim_m[i]);
+            }
+        }
     }
 }
 
@@ -193,5 +215,11 @@ void clear_faults()
 }
 
 void register_fault_callback(void (*cb)(Fault)) { s_cb = cb; }
+
+void set_homing_allow_neg(Axis a, bool allow)
+{
+    int i = (int)a; if (i < 0 || i >= 3) return;
+    s_homing_allow_neg[i] = allow;
+}
 
 } // namespace SafetyModule

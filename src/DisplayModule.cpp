@@ -3,6 +3,8 @@
 #include <cstdarg>
 #include <cstring>
 
+extern "C" void HAL_DelayUs(uint32_t us);
+
 namespace DisplayModule {
 
 static I2C_HandleTypeDef s_hi2c1;
@@ -138,6 +140,8 @@ static const char *state_str(ProgramState s)
         case ProgramState::CUT_SLOT_Y: return "CUT   ";
         case ProgramState::RETRACT_Z:  return "RET   ";
         case ProgramState::INDEX_X:    return "INDEX ";
+        case ProgramState::CORRECT_X:  return "CORRX ";
+        case ProgramState::STOPPING:   return "STOP  ";
         case ProgramState::DONE:       return "DONE  ";
         case ProgramState::PAUSED:     return "PAUSE ";
         case ProgramState::FAULT:      return "FAULT ";
@@ -146,7 +150,9 @@ static const char *state_str(ProgramState s)
 }
 
 void show_main(float x_cmd, float x_scale, float y_mm, float z_mm,
-               uint16_t rpm, ProgramState st, uint32_t idx, uint32_t tot)
+               uint16_t rpm, ProgramState st,
+               uint32_t idx, uint32_t tot,
+               bool sd_ok, const char *recipe_name)
 {
     set_cursor(0, 0);
     printf("Xc%7.3f Xs%7.3f", x_cmd, x_scale);
@@ -155,7 +161,42 @@ void show_main(float x_cmd, float x_scale, float y_mm, float z_mm,
     set_cursor(0, 2);
     printf("RPM %4u %s", (unsigned)rpm, state_str(st));
     set_cursor(0, 3);
-    printf("Slot %3u/%3u        ", (unsigned)(idx > tot ? tot : idx), (unsigned)tot);
+    // Рядок 3: IDLE/FAULT/DONE → [SD:OK|DEF] recipe (12 chars)
+    //         робочі стани → Slot n/N + short recipe name.
+    const char *tag = (st == ProgramState::IDLE || st == ProgramState::FAULT ||
+                       st == ProgramState::READY || st == ProgramState::DONE)
+                        ? (sd_ok ? "SD:OK " : "SD:DEF")
+                        : "Slot  ";
+    const char *rname = (recipe_name && recipe_name[0]) ? recipe_name : "default";
+    if (tag[0] == 'S' && tag[1] == 'D') {
+        // SD режим: показати повне ім'я рецепту
+        char short_n[14];
+        std::strncpy(short_n, rname, sizeof(short_n) - 1);
+        short_n[sizeof(short_n) - 1] = 0;
+        printf("%s %-13s", tag, short_n);
+    } else {
+        // Slot режим
+        uint32_t i = (idx > tot) ? tot : idx;
+        printf("Slot %3u/%3u %s", (unsigned)i, (unsigned)tot, rname);
+    }
+}
+
+void show_banner_sd_status(bool mounted, const char *recipe_name)
+{
+    clear();
+    set_cursor(0, 0);
+    print("CNC Comb STM32F407ZET6");
+    set_cursor(0, 1);
+    const char *tag = mounted ? "Mount OK" : "SD: defaults";
+    printf("Recipe: %-16s", tag);
+    set_cursor(0, 2);
+    const char *rname = (recipe_name && recipe_name[0]) ? recipe_name : "default";
+    char short_n[21];
+    std::strncpy(short_n, rname, sizeof(short_n) - 1);
+    short_n[sizeof(short_n) - 1] = 0;
+    printf("Name  : %-20s", short_n);
+    set_cursor(0, 3);
+    print("Press START -> HOME");
 }
 
 } // namespace DisplayModule

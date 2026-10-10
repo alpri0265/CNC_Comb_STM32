@@ -87,6 +87,14 @@ int main(void)
     ProgramModule::init();      // IDLE state
     ProgramModule::load_recipe(); // try to read RECIPE.TXT (else defaults)
 
+    // Вітальний екран: SD статус + ім'я рецепту
+    {
+        bool sd_mount  = StorageModule::is_sd_ready();
+        const char *rn = ProgramModule::has_recipe() ? ProgramModule::recipe().name : "default";
+        DisplayModule::show_banner_sd_status(sd_mount, rn);
+        HAL_Delay(1800); // 1.8с показати банер, потім головний екран
+    }
+
     // Clear FAULT if ESTOP is released within the first 2 seconds
     if (!SafetyModule::estop_active()) {
         SafetyModule::clear_faults();
@@ -145,8 +153,10 @@ int main(void)
             uint16_t rpm   = SpindleModule::get_rpm_setpoint();
             ProgramState st= ProgramModule::get_state();
             uint32_t idx   = ProgramModule::get_slot_index();
-            uint32_t tot   = ProgramModule::has_recipe() ? ProgramModule::recipe().pass_count : 0;
-            DisplayModule::show_main(xcmd, xscale, ymm, zmm, rpm, st, idx, tot);
+            uint32_t tot   = ProgramModule::has_recipe() ? ProgramModule::recipe().slots_count : 0;
+            bool sd_ok     = StorageModule::is_sd_ready();
+            const char *rn = ProgramModule::has_recipe() ? ProgramModule::recipe().name : "default";
+            DisplayModule::show_main(xcmd, xscale, ymm, zmm, rpm, st, idx, tot, sd_ok, rn);
         }
     }
 }
